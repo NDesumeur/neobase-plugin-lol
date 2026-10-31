@@ -1,0 +1,20 @@
+{
+  "id": "neobase.lol",
+  "name": "League of Legends",
+  "version": "1.0.0",
+  "author": "NDesumeur",
+  "description": "Lie ton compte Riot : tes dernières parties de League of Legends, tes statistiques, tes champions, ton classement et des courbes d'évolution.",
+  "icon": "icon.png",
+  "entry": "index.js",
+  "view": "lol",
+  "neobase": ">=4.0.0",
+  "type": "app",
+  "category": "Jeux",
+  "mobile": false,
+  "system": false,
+  "dependencies": {},
+  "permissions": [
+    "full",
+    "network"
+  ]
+}
