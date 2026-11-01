@@ -1,4 +1,4 @@
-# League of Legends
+# Invocateur (League of Legends)
 
 Plugin NeoBase : lie ton compte Riot (Riot ID + région + clé d'API) et retrouve tes dernières parties, tes statistiques (KDA, sbires/min, vision, dégâts, taux de victoire), tes champions, tes maîtrises, ton classement et des courbes d'évolution.
 
