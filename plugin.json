@@ -1,13 +1,13 @@
 {
   "id": "neobase.lol",
   "name": "Invocateur",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "author": "NDesumeur",
-  "description": "Lie ton compte Riot : tes dernières parties de League of Legends, tes statistiques, tes champions, ton classement et des courbes d'évolution.",
+  "description": "Lis ton compte League of Legends : directement depuis le client ouvert (sans clé Riot) ou avec une clé d'API. Dernières parties, statistiques, champions, classement et courbes.",
   "icon": "icon.png",
   "entry": "index.js",
   "view": "lol",
-  "neobase": ">=4.0.0",
+  "neobase": ">=4.1.0",
   "type": "app",
   "category": "Jeux",
   "mobile": false,
@@ -16,5 +16,6 @@
   "permissions": [
     "full",
     "network"
-  ]
+  ],
+  "main": "main.js"
 }

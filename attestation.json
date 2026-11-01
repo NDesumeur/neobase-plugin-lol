@@ -1,9 +1,0 @@
-{
-  "pluginId": "neobase.lol",
-  "repo": "NDesumeur/neobase-plugin-lol",
-  "version": "1.1.1",
-  "sha256": "ca51f9131f26f0075fe5ca731c91998646a495710b6d88e9dd1d6dece7b4f799",
-  "approvedAt": "2026-11-01T02:06:51.297Z",
-  "neobase": ">=4.0.0",
-  "signature": "O3sd7c9tjpcyxXjH/bPqimBUkprQR2m5JneNnSp1ML2sR8JXjvaZEsWOJqbxGnGPq1xEMvGRilXceQoGD9RBDQ=="
-}

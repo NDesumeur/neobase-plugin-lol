@@ -103,6 +103,7 @@ export default async function (ctx) {
   async function refresh(older) {
     if (busy || !D.acct) return; busy = true; note = 'Mise à jour…'; draw();
     try {
+      if (D.acct.local) { await refreshLocal(); busy = false; return draw(); }
       const {platform, region, puuid} = D.acct;
       await dragon();
       D.profile = await riot(platform, '/lol/summoner/v4/summoners/by-puuid/' + puuid);
@@ -122,6 +123,22 @@ export default async function (ctx) {
       note = added ? added + ' nouvelle(s) partie(s).' : 'À jour.'; await save();
     } catch (e) { note = ''; err = e.message || String(e); }
     busy = false; draw();
+  }
+  // ---- sans clé : le client League ouvert sur ce PC (lu par le côté système du plugin)
+  async function refreshLocal() {
+    await dragon().catch(() => {});  // les noms et images de champions : facultatifs
+    const r = await ctx.neo.pluginMain(ctx.id, 'lol:local', D.matches.map(m => m.id));
+    D.acct = {...D.acct, ...r.acct}; D.profile = r.profile; D.ranks = r.ranks; D.mastery = r.mastery;
+    const byKey = D.dd?.byKey || {}; for (const m of r.matches) { m.champ = byKey[m.cid]?.id || 'Unknown'; D.matches.push(m); }
+    const solo = D.ranks.find(r => r.queueType === 'RANKED_SOLO_5x5');
+    if (solo) { const sc = lpScore(solo), last = D.rankHist.at(-1); if (!last || last.s !== sc) D.rankHist.push({t: Date.now(), s: sc, label: rankName(solo) + ' · ' + solo.leaguePoints + ' LP'}); D.rankHist = D.rankHist.slice(-300); }
+    D.matches.sort((a, b) => b.t - a.t); D.matches = D.matches.slice(0, 400); D.updated = Date.now();
+    note = r.matches.length ? r.matches.length + ' nouvelle(s) partie(s).' : 'À jour.'; err = ''; await save();
+  }
+  async function linkLocal() {
+    err = ''; D = {acct: {gameName: '…', tagLine: '', local: true}, profile: null, ranks: [], mastery: [], matches: [], rankHist: [], dd: D.dd, updated: 0};
+    await refresh(false);
+    if (err && !D.profile) { D.acct = null; draw(); }
   }
   async function link(riotId, regionName, key) {
     err = ''; const m = /^\s*(.+?)\s*#\s*([^#\s]{2,5})\s*$/.exec(riotId); if (!m) { err = 'Le Riot ID s\'écrit Nom#TAG (par exemple Faker#KR1).'; return draw(); }
@@ -172,7 +189,7 @@ export default async function (ctx) {
     const head = el('div', 'card head'), p = D.profile, who = el('div', 'who');
     head.append(picture(p && D.dd ? 'https://ddragon.leagueoflegends.com/cdn/' + D.dd.v + '/img/profileicon/' + p.profileIconId + '.png' : '', 'pic', D.acct.gameName));
     who.append(el('b', '', D.acct.gameName + ' #' + D.acct.tagLine), el('span', 'hint', (D.acct.regionName || D.acct.platform) + (p ? ' · niveau ' + p.summonerLevel : '') + (D.updated ? ' · mis à jour il y a ' + ago(D.updated) : '')));
-    const acts = el('div', 'row'), bR = el('button', 'main', 'ACTUALISER'), bM = el('button', 'q', '+ DE PARTIES'), bK = el('button', 'q', 'NOUVELLE CLÉ'), bU = el('button', 'q', 'DÉLIER');
+    const acts = el('div', 'row'), bR = el('button', 'main', 'ACTUALISER'), bM = el('button', 'q', '+ DE PARTIES'), bK = D.acct.local ? document.createDocumentFragment() : el('button', 'q', 'NOUVELLE CLÉ'), bU = el('button', 'q', 'DÉLIER');
     bR.disabled = bM.disabled = busy; bR.onclick = () => refresh(false); bM.onclick = () => refresh(true); bK.onclick = () => { keyBox.style.display = keyBox.style.display ? '' : 'none'; };
     bU.onclick = () => ctx.host.confirm('Délier ce compte et effacer ses parties gardées ?').then(ok => ok && unlink());
     acts.append(bR, bM, bK, bU); who.append(acts); head.append(who); root.append(head);
@@ -202,9 +219,12 @@ export default async function (ctx) {
     const reg = mk('Région', el('select')); for (const k of Object.keys(REGIONS)) { const o = el('option', '', k); o.value = k; reg.append(o); }
     const key = mk('Clé d\'API Riot', el('input'), true); key.type = 'password'; key.placeholder = 'RGAPI-…'; key.autocomplete = 'off';
     const go = el('button', 'main', 'LIER MON COMPTE'); go.disabled = busy; go.onclick = () => link(id.value, reg.value, key.value);
+    const loc = el('button', 'main', 'UTILISER LE CLIENT LEAGUE (SANS CLÉ)'); loc.disabled = busy; loc.onclick = linkLocal;
     const dev = el('button', 'q', 'OBTENIR UNE CLÉ (developer.riotgames.com)'); dev.onclick = () => ctx.host.newTab('https://developer.riotgames.com/');
     const row = el('div', 'row full'); row.append(go, dev); f.append(row);
-    card.append(el('h2', '', 'LIER MON COMPTE RIOT'), el('p', 'hint', 'Riot ne laisse une appli lire un compte qu\'avec une clé d\'API : connecte-toi sur developer.riotgames.com avec ton compte Riot, copie la « Development API Key » (elle dure 24 h, tu pourras la remplacer d\'un clic) et colle-la ici avec ton Riot ID. Aucun mot de passe n\'est demandé ; la clé reste dans le dossier de ce plugin et ne part que vers l\'API de Riot.'), f);
+    const lc = el('div', 'card'); lc.append(el('h2', '', 'LE PLUS SIMPLE : LE CLIENT LEAGUE'), el('p', 'hint', 'Lance le client League of Legends et connecte-toi : NeoBase lit alors ton profil, ton classement, tes champions et tes dernières parties directement sur ce PC, sans clé Riot. Seul ton compte est lu, et seulement quand le client est ouvert.'), (() => { const r = el('div', 'row'); r.append(loc); return r; })());
+    root.append(lc);
+    card.append(el('h2', '', 'OU AVEC UNE CLÉ RIOT (tous les comptes)'), el('p', 'hint', 'Riot ne laisse une appli lire un compte qu\'avec une clé d\'API : connecte-toi sur developer.riotgames.com avec ton compte Riot, copie la « Development API Key » (elle dure 24 h, tu pourras la remplacer d\'un clic) et colle-la ici avec ton Riot ID. Aucun mot de passe n\'est demandé ; la clé reste dans le dossier de ce plugin et ne part que vers l\'API de Riot.'), f);
     root.append(card); if (note) root.append(el('div', 'hint', note)); if (err) root.append(el('div', 'err', err));
   }
   function tabOverview(ms, rs) {
@@ -264,7 +284,7 @@ export default async function (ctx) {
   ctx.onOpen(async () => {
     const [cache, k] = await Promise.all([ctx.folder.read('cache').catch(() => null), ctx.folder.read('key').catch(() => null)]);
     if (cache && cache.acct) D = {...D, ...cache}; KEY = k?.k || ''; draw();
-    if (D.acct && KEY && (!D.updated || Date.now() - D.updated > 10 * 60000)) refresh(false);  // au plus une mise à jour automatique toutes les 10 minutes
+    if (D.acct && (KEY || D.acct.local) && (!D.updated || Date.now() - D.updated > 10 * 60000)) refresh(false);  // au plus une mise à jour automatique toutes les 10 minutes
   });
   draw();
 }
