@@ -1,7 +1,7 @@
 {
   "id": "neobase.lol",
   "name": "Invocateur",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "NDesumeur",
   "description": "Lie ton compte Riot : tes dernières parties de League of Legends, tes statistiques, tes champions, ton classement et des courbes d'évolution.",
   "icon": "icon.png",

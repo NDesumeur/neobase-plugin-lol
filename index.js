@@ -68,7 +68,7 @@ export default async function (ctx) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // ---- l'API de Riot (la clé voyage dans l'en-tête X-Riot-Token, seulement vers *.api.riotgames.com)
-  const MSG = {400: 'Requête refusée par Riot.', 401: 'Clé d\'API refusée : recopie-la depuis developer.riotgames.com.', 403: 'Clé d\'API expirée ou refusée : une clé de développement dure 24 h, génères-en une nouvelle sur developer.riotgames.com.',
+  const MSG = {400: 'Requête refusée par Riot.', 401: 'Riot ne reconnaît pas cette clé (« Unknown apikey »). Sur developer.riotgames.com, clique « Regenerate API Key » puis copie la nouvelle clé en entier : dès qu\'on en génère une autre, l\'ancienne ne marche plus.', 403: 'Clé d\'API expirée ou refusée : une clé de développement dure 24 h, génères-en une nouvelle sur developer.riotgames.com.',
     404: 'Introuvable : vérifie le Riot ID (Nom#TAG) et la région.', 429: 'Trop de requêtes pour Riot : attends une minute et réessaie.', 500: 'Riot a un problème, réessaie plus tard.', 503: 'Les serveurs de Riot sont indisponibles.'};
   async function riot(host, path, retry = true) {
     if (!/^[a-z0-9]+$/.test(host)) throw new Error('hôte invalide');
@@ -125,8 +125,9 @@ export default async function (ctx) {
   }
   async function link(riotId, regionName, key) {
     err = ''; const m = /^\s*(.+?)\s*#\s*([^#\s]{2,5})\s*$/.exec(riotId); if (!m) { err = 'Le Riot ID s\'écrit Nom#TAG (par exemple Faker#KR1).'; return draw(); }
-    if (!/^RGAPI-[\w-]{20,}$/.test(key.trim())) { err = 'La clé d\'API commence par RGAPI- (developer.riotgames.com → « Development API Key »).'; return draw(); }
-    KEY = key.trim(); const [platform, region] = REGIONS[regionName] || REGIONS['EUW (Europe Ouest)']; busy = true; note = 'Recherche du compte…'; draw();
+    key = key.replace(/[^\w-]/g, '');  // guillemets, espaces ou caractères invisibles collés avec la clé
+    if (!/^RGAPI-[\w-]{20,}$/.test(key)) { err = 'La clé d\'API commence par RGAPI- (developer.riotgames.com → « Development API Key »).'; return draw(); }
+    KEY = key; const [platform, region] = REGIONS[regionName] || REGIONS['EUW (Europe Ouest)']; busy = true; note = 'Recherche du compte…'; draw();
     try {
       const a = await riot(region, '/riot/account/v1/accounts/by-riot-id/' + encodeURIComponent(m[1]) + '/' + encodeURIComponent(m[2]));
       D = {acct: {gameName: a.gameName, tagLine: a.tagLine, puuid: a.puuid, platform, region, regionName}, profile: null, ranks: [], mastery: [], matches: [], rankHist: [], dd: D.dd, updated: 0};
@@ -134,7 +135,7 @@ export default async function (ctx) {
     } catch (e) { busy = false; note = ''; err = e.message || String(e); draw(); }
   }
   async function unlink() { D = {acct: null, profile: null, ranks: [], mastery: [], matches: [], rankHist: [], dd: D.dd, updated: 0}; KEY = ''; await ctx.folder.remove('key').catch(() => {}); await save(); err = note = ''; draw(); }
-  async function newKey(k) { if (!/^RGAPI-[\w-]{20,}$/.test(k.trim())) { err = 'La clé d\'API commence par RGAPI-.'; return draw(); } KEY = k.trim(); await ctx.folder.write('key', {k: KEY}); err = ''; await refresh(false); }
+  async function newKey(k) { k = k.replace(/[^\w-]/g, ''); if (!/^RGAPI-[\w-]{20,}$/.test(k)) { err = 'La clé d\'API commence par RGAPI-.'; return draw(); } KEY = k; await ctx.folder.write('key', {k: KEY}); err = ''; await refresh(false); }
 
   // ---- les chiffres
   const kdaOf = ms => { const k = ms.reduce((a, m) => a + m.k, 0), d = ms.reduce((a, m) => a + m.d, 0), a = ms.reduce((x, m) => x + m.a, 0); return d ? (k + a) / d : k + a; };
