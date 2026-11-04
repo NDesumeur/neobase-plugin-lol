@@ -1,7 +1,7 @@
 {
   "id": "neodex.lol",
   "name": "Invocateur",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "NDesumeur",
   "description": "Lis ton compte League of Legends : directement depuis le client ouvert (sans clé Riot) ou avec une clé d'API. Dernières parties, statistiques, champions, classement et courbes.",
   "icon": "icon.png",

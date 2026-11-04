@@ -1,5 +1,44 @@
 // League of Legends : ton compte Riot (Riot ID + région + clé d'API Riot), tes dernières parties, tes statistiques, tes champions et des courbes d'évolution.
 // Plugin à accès complet (signé) pour afficher les images de Data Dragon ; il ne parle qu'à l'API de Riot et à Data Dragon, jamais à un autre site.
+// ---- l'analyse des parties (rs : parties jouées, de la plus récente à la plus ancienne ; sans les parties refaites)
+const wrOf = ms => ms.length ? Math.round(ms.filter(m => m.win).length / ms.length * 100) : 0;
+const mean = (ms, f) => ms.length ? ms.reduce((a, m) => a + f(m), 0) / ms.length : 0;
+const kdaOf = ms => { const k = ms.reduce((a, m) => a + m.k, 0), d = ms.reduce((a, m) => a + m.d, 0), a = ms.reduce((x, m) => x + m.a, 0); return d ? (k + a) / d : k + a; };
+const SESSION = 90 * 60000;  // deux parties à moins d'1 h 30 d'écart : la même session
+function analyze(rs) {
+  const old = [...rs].reverse(), split = (f, keys) => keys.map(([k, l]) => { const ms = rs.filter(m => f(m) === k); return {l, n: ms.length, wr: wrOf(ms), kda: kdaOf(ms)}; }).filter(r => r.n);
+  let cur = 0, bestW = 0, bestL = 0, run = 0;
+  for (const m of old) { run = (run > 0) === m.win && run ? run + (m.win ? 1 : -1) : m.win ? 1 : -1; bestW = Math.max(bestW, run); bestL = Math.max(bestL, -run); }
+  for (const m of rs) { if (cur && (cur > 0) !== m.win) break; cur += m.win ? 1 : -1; }
+  const after = w => old.filter((m, i) => i && old[i - 1].win === w && m.t - old[i - 1].t < SESSION);
+  const sessions = []; for (const m of old) { const s = sessions.at(-1); if (s && m.t - s.at(-1).t < SESSION) s.push(m); else sessions.push([m]); }
+  const long = sessions.map(s => s.slice(3)).flat();  // 4e partie et suivantes d'une même session
+  const hour = m => { const h = new Date(m.t).getHours(); return h < 6 ? 3 : h < 12 ? 0 : h < 18 ? 1 : 2; };
+  const len = m => m.dur < 1500 ? 0 : m.dur < 2100 ? 1 : 2;
+  const X = rs.filter(m => m.x), V = X.filter(m => m.vsGold != null);
+  const champs = new Map(); for (const m of rs) champs.set(m.champ, [...(champs.get(m.champ) || []), m]);
+  const ranked = [...champs].filter(([, l]) => l.length >= 3).map(([c, l]) => ({c, n: l.length, wr: wrOf(l), kda: kdaOf(l)})).sort((a, b) => b.wr - a.wr || b.kda - a.kda);
+  const rec = (f, fmt) => { const m = rs.reduce((b, x) => f(x) > f(b) ? x : b, rs[0]); return m && {v: fmt(f(m)), champ: m.champ, t: m.t}; };
+  const kda1 = m => m.d ? (m.k + m.a) / m.d : m.k + m.a;
+  return {
+    streak: cur, bestW, bestL,
+    tilt: {afterWin: {n: after(true).length, wr: wrOf(after(true))}, afterLoss: {n: after(false).length, wr: wrOf(after(false))}, long: {n: long.length, wr: wrOf(long)}},
+    roles: split(m => m.role, [['TOP', 'Top'], ['JUNGLE', 'Jungle'], ['MIDDLE', 'Mid'], ['BOTTOM', 'ADC'], ['UTILITY', 'Support']]),
+    hours: split(hour, [[0, 'Matin (6 h – 12 h)'], [1, 'Après-midi (12 h – 18 h)'], [2, 'Soirée (18 h – minuit)'], [3, 'Nuit (minuit – 6 h)']]),
+    days: split(m => (new Date(m.t).getDay() + 6) % 7, ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((l, i) => [i, l])),
+    lengths: split(len, [[0, 'Moins de 25 min'], [1, '25 à 35 min'], [2, 'Plus de 35 min']]),
+    deaths: {few: {n: rs.filter(m => m.d <= 3).length, wr: wrOf(rs.filter(m => m.d <= 3))}, many: {n: rs.filter(m => m.d >= 7).length, wr: wrOf(rs.filter(m => m.d >= 7))}},
+    detail: X.length ? {n: X.length, gpm: mean(X, m => m.gold / (m.dur / 60)), taken: mean(X, m => m.taken / (m.dur / 60)), cc: mean(X, m => m.cc), wards: mean(X, m => m.wards / (m.dur / 60)), cw: mean(X, m => m.cw),
+      fb: Math.round(X.filter(m => m.fb).length / X.length * 100), fbWr: wrOf(X.filter(m => m.fb)), towers: mean(X, m => m.towers), drakes: X.reduce((a, m) => a + m.drakes, 0),
+      multi: [0, 1, 2, 3].map(i => X.reduce((a, m) => a + m.multi[i], 0)), solo: X.some(m => m.solo != null) ? mean(X.filter(m => m.solo != null), m => m.solo) : null} : null,
+    lane: V.length ? {n: V.length, cs: mean(V, m => m.vsCs), gold: mean(V, m => m.vsGold), dmg: mean(V, m => m.vsDmg), ahead: Math.round(V.filter(m => m.vsGold > 0).length / V.length * 100),
+      wrAhead: wrOf(V.filter(m => m.vsGold > 0)), wrBehind: wrOf(V.filter(m => m.vsGold <= 0))} : null,
+    best: ranked.slice(0, 3), worst: ranked.slice(3).filter(r => r.wr < 50).slice(-2).reverse(),  // jamais un champion déjà dans les meilleurs
+    records: rs.length ? [['Le plus de kills', rec(m => m.k, v => v + ' kills')], ['Le plus de dégâts', rec(m => m.dmg, v => v.toLocaleString('fr-FR'))], ['Meilleur KDA', rec(kda1, v => v.toFixed(1))],
+      ['Sbires par minute', rec(m => m.cs / (m.dur / 60), v => v.toFixed(1))], ['Plus longue série de kills', rec(m => m.spree || 0, v => v + ' d\'affilée')]].filter(([, r]) => r) : [],
+  };
+}
+
 export default async function (ctx) {
   const el = ctx.el, net = (url, opts) => ctx.neo.pluginNet(ctx.id, url, opts);
   let netOk; const ensureNet = async () => netOk ??= await ctx.permission('network');  // l'autorisation réseau est demandée à l'usage
@@ -59,6 +98,9 @@ export default async function (ctx) {
     .lol .charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:14px}
     .lol canvas{width:100%;height:auto;image-rendering:pixelated;background:#0d0820;box-shadow:inset 0 0 0 2px var(--line2,#3a2a6e);display:block}
     .lol .empty{opacity:.7;padding:20px 0;text-align:center}
+    .lol .kv{display:grid;grid-template-columns:1fr auto;gap:4px 14px;align-items:baseline;font-size:14px}
+    .lol .kv b{font:13px var(--title,monospace);text-align:right} .lol .kv small{grid-column:1/-1;font-size:11px;color:var(--lilac,#c9bde6);margin:-2px 0 4px}
+    .lol .kv small:empty{display:none}
     @media (max-width:640px){.lol .line{grid-template-columns:40px 1fr 1fr 1fr}.lol .line>:nth-child(n+5){display:none}.lol .m{grid-template-columns:6px 40px 1fr 1fr}.lol .m>:nth-child(n+5){display:none}}`);
   const root = el('div', 'lol'); ctx.view.append(root);
 
@@ -98,7 +140,16 @@ export default async function (ctx) {
     const p = m.info.participants.find(x => x.puuid === puuid); if (!p) return null;
     const team = m.info.participants.filter(x => x.teamId === p.teamId), tk = team.reduce((a, x) => a + x.kills, 0) || 1, td = team.reduce((a, x) => a + x.totalDamageDealtToChampions, 0) || 1, dur = m.info.gameDuration;
     return {id: m.metadata.matchId, t: m.info.gameStartTimestamp, dur: dur > 3600 * 6 ? Math.round(dur / 1000) : dur, q: m.info.queueId, champ: p.championName, cid: p.championId, role: p.teamPosition || '', win: !!p.win && !p.gameEndedInEarlySurrender,
-      remake: !!p.gameEndedInEarlySurrender, k: p.kills, d: p.deaths, a: p.assists, cs: p.totalMinionsKilled + p.neutralMinionsKilled, vis: p.visionScore, dmg: p.totalDamageDealtToChampions, gold: p.goldEarned, kp: Math.round((p.kills + p.assists) / tk * 100), share: Math.round(p.totalDamageDealtToChampions / td * 100)};
+      remake: !!p.gameEndedInEarlySurrender, k: p.kills, d: p.deaths, a: p.assists, cs: p.totalMinionsKilled + p.neutralMinionsKilled, vis: p.visionScore, dmg: p.totalDamageDealtToChampions, gold: p.goldEarned, kp: Math.round((p.kills + p.assists) / tk * 100), share: Math.round(p.totalDamageDealtToChampions / td * 100),
+      ...extra(p, m.info.participants.find(x => x.teamId !== p.teamId && p.teamPosition && x.teamPosition === p.teamPosition))};
+  };
+  // le détail en plus (parties chargées depuis la version 1.4) : objectifs, multi-kills, vision, et l'adversaire direct de la même voie
+  const extra = (p, o) => {
+    const c = p.challenges || {}, cs = x => x.totalMinionsKilled + x.neutralMinionsKilled;
+    return {x: 1, taken: p.totalDamageTaken, mitig: p.damageSelfMitigated, heal: p.totalHeal, cc: p.timeCCingOthers, wards: p.wardsPlaced, wk: p.wardsKilled, cw: p.detectorWardsPlaced ?? p.visionWardsBoughtInGame,
+      multi: [p.doubleKills, p.tripleKills, p.quadraKills, p.pentaKills].map(n => n || 0), spree: p.largestKillingSpree || 0, fb: !!(p.firstBloodKill || p.firstBloodAssist), towers: p.turretKills || 0,
+      drakes: p.dragonKills || 0, barons: p.baronKills || 0, solo: c.soloKills, plates: c.turretPlatesTaken, cs10: c.laneMinionsFirst10Minutes,
+      ...(o ? {opp: o.championName, vsCs: cs(p) - cs(o), vsGold: p.goldEarned - o.goldEarned, vsDmg: p.totalDamageDealtToChampions - o.totalDamageDealtToChampions, vsK: p.kills - o.kills} : {})};
   };
   async function refresh(older) {
     if (busy || !D.acct) return; busy = true; note = 'Mise à jour…'; draw();
@@ -129,7 +180,7 @@ export default async function (ctx) {
     await dragon().catch(() => {});  // les noms et images de champions : facultatifs
     const r = await ctx.neo.pluginMain(ctx.id, 'lol:local', D.matches.map(m => m.id));
     D.acct = {...D.acct, ...r.acct}; D.profile = r.profile; D.ranks = r.ranks; D.mastery = r.mastery;
-    const byKey = D.dd?.byKey || {}; for (const m of r.matches) { m.champ = byKey[m.cid]?.id || 'Unknown'; D.matches.push(m); }
+    const byKey = D.dd?.byKey || {}; for (const m of r.matches) { m.champ = byKey[m.cid]?.id || 'Unknown'; if (m.oppCid) m.opp = byKey[m.oppCid]?.id; D.matches.push(m); }
     const solo = D.ranks.find(r => r.queueType === 'RANKED_SOLO_5x5');
     if (solo) { const sc = lpScore(solo), last = D.rankHist.at(-1); if (!last || last.s !== sc) D.rankHist.push({t: Date.now(), s: sc, label: rankName(solo) + ' · ' + solo.leaguePoints + ' LP'}); D.rankHist = D.rankHist.slice(-300); }
     D.matches.sort((a, b) => b.t - a.t); D.matches = D.matches.slice(0, 400); D.updated = Date.now();
@@ -155,14 +206,16 @@ export default async function (ctx) {
   async function newKey(k) { k = k.replace(/[^\w-]/g, ''); if (!/^RGAPI-[\w-]{20,}$/.test(k)) { err = 'La clé d\'API commence par RGAPI-.'; return draw(); } KEY = k; await ctx.folder.write('key', {k: KEY}); err = ''; await refresh(false); }
 
   // ---- les chiffres
-  const kdaOf = ms => { const k = ms.reduce((a, m) => a + m.k, 0), d = ms.reduce((a, m) => a + m.d, 0), a = ms.reduce((x, m) => x + m.a, 0); return d ? (k + a) / d : k + a; };
-  const avg = (ms, f) => ms.length ? ms.reduce((a, m) => a + f(m), 0) / ms.length : 0;
+  const avg =(ms, f) => ms.length ? ms.reduce((a, m) => a + f(m), 0) / ms.length : 0;
   const real = ms => ms.filter(m => !m.remake);
   const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
   const ago = t => { const m = Math.max(1, Math.round((Date.now() - t) / 60000)); return m < 60 ? m + ' min' : m < 1440 ? Math.round(m / 60) + ' h' : Math.round(m / 1440) + ' j'; };
   const dur = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   const tile = (value, label, cls) => { const t = el('div', 'tile'); t.append(el('b', cls || '', value), el('span', '', label)); return t; };
   const wrCls = w => w >= 55 ? 'good' : w >= 50 ? 'mid' : 'bad';
+  const sign = n => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(Math.round(n)).toLocaleString('fr-FR');
+  const champName = id => D.dd && Object.values(D.dd.byKey).find(x => x.id === id)?.name || id || '?';
+  const perMin = (m, v) => v / (m.dur / 60);
 
   // ---- les courbes (pixel art : des carrés, pas de bibliothèque)
   function chart(title, pts, o = {}) {  // pts : [{y, tip}] du plus ancien au plus récent
@@ -204,13 +257,13 @@ export default async function (ctx) {
     }
     root.append(ranks);
     const tabs = el('div', 'tabs');
-    for (const [k, l] of [['apercu', 'APERÇU'], ['champions', 'CHAMPIONS'], ['historique', 'HISTORIQUE'], ['courbes', 'ÉVOLUTION']]) { const b = el('button', k === tab ? 'on' : 'q', l); b.onclick = () => { tab = k; draw(); }; tabs.append(b); }
+    for (const [k, l] of [['apercu', 'APERÇU'], ['analyse', 'ANALYSE'], ['champions', 'CHAMPIONS'], ['historique', 'HISTORIQUE'], ['courbes', 'ÉVOLUTION']]) { const b = el('button', k === tab ? 'on' : 'q', l); b.onclick = () => { tab = k; draw(); }; tabs.append(b); }
     const sel = el('select'); for (const [k, [l]] of Object.entries(GROUPS)) { const o = el('option', '', l); o.value = k; sel.append(o); } sel.value = group; sel.onchange = () => { group = sel.value; draw(); }; tabs.append(sel);
     root.append(tabs);
     const ms = D.matches.filter(m => GROUPS[group][1](m.q)), rs = real(ms);
     if (!D.matches.length) { root.append(el('div', 'empty', busy ? '' : 'Aucune partie en mémoire : appuie sur ACTUALISER.')); return; }
     if (!ms.length) { root.append(el('div', 'empty', 'Aucune partie de ce type parmi les ' + D.matches.length + ' gardées. Charge-en plus avec « + DE PARTIES ».')); return; }
-    ({apercu: tabOverview, champions: tabChampions, historique: tabHistory, courbes: tabCharts})[tab](ms, rs);
+    ({apercu: tabOverview, analyse: tabAnalysis, champions: tabChampions, historique: tabHistory, courbes: tabCharts})[tab](ms, rs);
   }
   function drawLink() {
     const card = el('div', 'card'), f = el('div', 'form');
@@ -242,6 +295,44 @@ export default async function (ctx) {
     for (const m of recent) { const s = el('div', 'badge', m.win ? 'V' : 'D'); s.style.background = m.win ? '#8ee8a0' : '#ff7a8a'; s.style.width = s.style.height = '30px'; s.title = m.champ + ' ' + m.k + '/' + m.d + '/' + m.a; strip.append(s); }
     c2.append(strip); root.append(c2);
   }
+  function tabAnalysis(ms, rs) {
+    const A = analyze(rs), when = t => new Date(t).toLocaleDateString('fr-FR', {day: 'numeric', month: 'short'});
+    const card = (title, ...kids) => { const c = el('div', 'card'); c.append(el('h2', '', title), ...kids); return c; };
+    const kv = rows => { const g = el('div', 'kv'); for (const [l, v, cls, sub] of rows) g.append(el('span', '', l), el('b', cls || '', v), el('small', '', sub || '')); return g; };
+    const wrRows = list => list.map(r => [r.l, r.wr + ' %', wrCls(r.wr), r.n + ' partie' + (r.n > 1 ? 's' : '') + (r.kda != null ? ' · KDA ' + r.kda.toFixed(2) : '')]);
+    const grid = el('div', 'charts');
+    const s = A.streak, t = A.tilt;
+    grid.append(card('SÉRIES ET MENTAL', kv([
+      ['Série en cours', Math.abs(s) + (s > 0 ? ' victoire' : ' défaite') + (Math.abs(s) > 1 ? 's' : ''), s > 0 ? 'good' : 'bad'],
+      ['Plus longue série de victoires', String(A.bestW), 'good'], ['Plus longue série de défaites', String(A.bestL), 'bad'],
+      ['Juste après une victoire', t.afterWin.n ? t.afterWin.wr + ' %' : '–', wrCls(t.afterWin.wr), t.afterWin.n + ' parties'],
+      ['Juste après une défaite', t.afterLoss.n ? t.afterLoss.wr + ' %' : '–', wrCls(t.afterLoss.wr), t.afterLoss.n + ' parties'],
+      ['4e partie de la session et plus', t.long.n ? t.long.wr + ' %' : '–', wrCls(t.long.wr), t.long.n + ' parties']]),
+      el('p', 'hint', t.afterLoss.n >= 5 && t.afterLoss.wr < t.afterWin.wr - 10 ? 'Après une défaite, tu gagnes nettement moins : une pause avant de relancer peut valoir des LP.'
+        : t.long.n >= 5 && t.long.wr < wrOf(rs) - 8 ? 'Tes longues sessions te coûtent des victoires : au-delà de 3 parties, ton taux baisse.' : 'Rien d\'alarmant côté tilt.')));
+    if (A.lane) grid.append(card('FACE À TON ADVERSAIRE DIRECT', kv([
+      ['Écart de sbires', sign(A.lane.cs), A.lane.cs >= 0 ? 'good' : 'bad', 'en fin de partie'], ['Écart d\'or', sign(A.lane.gold), A.lane.gold >= 0 ? 'good' : 'bad'],
+      ['Écart de dégâts', sign(A.lane.dmg), A.lane.dmg >= 0 ? 'good' : 'bad'], ['Parties où tu finis devant', A.lane.ahead + ' %', wrCls(A.lane.ahead)],
+      ['Victoires quand tu es devant', A.lane.wrAhead + ' %', wrCls(A.lane.wrAhead)], ['Victoires quand tu es derrière', A.lane.wrBehind + ' %', wrCls(A.lane.wrBehind)]]),
+      el('p', 'hint', A.lane.n + ' parties comparées au joueur de la même voie dans l\'équipe adverse.')));
+    const X = A.detail;
+    if (X) grid.append(card('LE DÉTAIL DE TON JEU', kv([
+      ['Or par minute', Math.round(X.gpm).toLocaleString('fr-FR')], ['Dégâts subis par minute', Math.round(X.taken).toLocaleString('fr-FR')],
+      ['Contrôle des foules infligé', X.cc.toFixed(0) + ' s', '', 'par partie'], ['Balises posées par minute', X.wards.toFixed(2)], ['Balises de contrôle', X.cw.toFixed(1), X.cw < 1 ? 'bad' : '', 'par partie'],
+      ['Premier sang', X.fb + ' %', '', 'des parties · ' + X.fbWr + ' % de victoires'], ['Tours détruites', X.towers.toFixed(1), '', 'par partie'], ['Dragons', String(X.drakes), '', 'au total'],
+      ...(X.solo != null ? [['Kills en solo', X.solo.toFixed(1), '', 'par partie']] : []),
+      ['Multi-kills', X.multi.join(' · '), X.multi[3] ? 'good' : '', 'doublés · triplés · quadras · pentas']]),
+      el('p', 'hint', X.n + ' parties avec le détail complet' + (X.n < rs.length ? ' (les plus anciennes n\'en ont pas : elles ont été chargées avant cette version)' : '') + '.')));
+    else grid.append(card('LE DÉTAIL DE TON JEU', el('p', 'hint', 'Appuie sur ACTUALISER : les nouvelles parties gardent l\'or, la vision, les objectifs, les multi-kills et l\'écart face à ton adversaire.')));
+    if (A.roles.length) grid.append(card('PAR RÔLE', kv(wrRows(A.roles))));
+    grid.append(card('SELON L\'HEURE', kv(wrRows(A.hours))), card('SELON LE JOUR', kv(wrRows(A.days))), card('SELON LA DURÉE', kv(wrRows(A.lengths)),
+      el('p', 'hint', (() => { const [a, , c] = [0, 1, 2].map(i => A.lengths.find(r => r.l === ['Moins de 25 min', '25 à 35 min', 'Plus de 35 min'][i])); return a && c && a.n >= 3 && c.n >= 3 ? (a.wr > c.wr + 10 ? 'Tu gagnes surtout les parties courtes : pousse ton avance tôt.' : c.wr > a.wr + 10 ? 'Tu es plus fort en fin de partie : ne lâche rien en début de partie.' : 'Ton jeu tient aussi bien en début qu\'en fin de partie.') : ''; })())));
+    grid.append(card('LES MORTS', kv([['3 morts ou moins', A.deaths.few.wr + ' %', wrCls(A.deaths.few.wr), A.deaths.few.n + ' parties'], ['7 morts ou plus', A.deaths.many.wr + ' %', wrCls(A.deaths.many.wr), A.deaths.many.n + ' parties']])));
+    if (A.best.length) grid.append(card('TES MEILLEURS CHAMPIONS (3 parties ou plus)', kv([...A.best.map(r => [champName(r.c), r.wr + ' %', wrCls(r.wr), r.n + ' parties · KDA ' + r.kda.toFixed(2)]),
+      ...A.worst.map(r => ['À éviter : ' + champName(r.c), r.wr + ' %', wrCls(r.wr), r.n + ' parties · KDA ' + r.kda.toFixed(2)])])));
+    if (A.records.length) grid.append(card('RECORDS', kv(A.records.map(([l, r]) => [l, r.v, 'good', champName(r.champ) + ' · ' + when(r.t)]))));
+    root.append(grid);
+  }
   function tabChampions(ms, rs) {
     const by = new Map(); for (const m of rs) { const c = by.get(m.champ) || []; c.push(m); by.set(m.champ, c); }
     const rows = [...by].sort((a, b) => b[1].length - a[1].length), c = el('div', 'card'), tb = el('div', 'tbl'), h = el('div', 'line h');
@@ -265,6 +356,13 @@ export default async function (ctx) {
       r.append(el('i', 'bar'), picture(champImg(m.champ), 'ic', m.champ), res, who, kda, cs, tm);
       const det = el('div', 'det'); det.style.display = open === m.id ? 'flex' : 'none';
       det.append(el('span', '', 'Dégâts : ' + m.dmg.toLocaleString('fr-FR') + ' (' + m.share + ' % de l\'équipe)'), el('span', '', 'Participation : ' + m.kp + ' %'), el('span', '', 'Or : ' + m.gold.toLocaleString('fr-FR')), el('span', '', 'Vision : ' + m.vis));
+      if (m.x) {
+        const mk = ['doublé', 'triplé', 'quadruplé', 'PENTAKILL'].map((n, i) => m.multi[i] ? m.multi[i] + ' ' + n : '').filter(Boolean).join(', ');
+        det.append(el('span', '', 'Subis : ' + m.taken.toLocaleString('fr-FR')), el('span', '', 'Balises : ' + m.wards + ' posées · ' + m.wk + ' détruites · ' + m.cw + ' de contrôle'),
+          el('span', '', 'Tours : ' + m.towers + ' · dragons : ' + m.drakes + (m.barons ? ' · nashor : ' + m.barons : '')), el('span', '', 'Contrôle des foules : ' + m.cc + ' s'));
+        if (mk) det.append(el('span', 'good', mk)); if (m.fb) det.append(el('span', 'good', 'Premier sang'));
+        if (m.vsCs != null) det.append(el('span', m.vsGold >= 0 ? 'good' : 'bad', 'Face à ' + champName(m.opp) + ' : ' + sign(m.vsCs) + ' sbires, ' + sign(m.vsGold) + ' or, ' + sign(m.vsDmg) + ' dégâts'));
+      }
       r.onclick = () => { open = open === m.id ? null : m.id; det.style.display = open === m.id ? 'flex' : 'none'; };
       tb.append(r, det);
     }
@@ -288,3 +386,4 @@ export default async function (ctx) {
   });
   draw();
 }
+export const _analyze = analyze;  // pour les tests

@@ -40,7 +40,15 @@ function game(g, me, detail) {
   const dur = g.gameDuration || detail.gameDuration || 0, early = !!(s.causedEarlySurrender || s.gameEndedInEarlySurrender);
   return { id: 'LCU_' + g.gameId, t: g.gameCreation, dur: dur > 3600 * 6 ? Math.round(dur / 1000) : dur, q: g.queueId, cid: p.championId, role: lane(p.timeline), win: !!s.win && !early, remake: early,
     k: s.kills || 0, d: s.deaths || 0, a: s.assists || 0, cs: (s.totalMinionsKilled || 0) + (s.neutralMinionsKilled || 0), vis: s.visionScore || 0, dmg: s.totalDamageDealtToChampions || 0, gold: s.goldEarned || 0,
-    kp: Math.round(((s.kills || 0) + (s.assists || 0)) / tk * 100), share: Math.round((s.totalDamageDealtToChampions || 0) / td * 100) };
+    kp: Math.round(((s.kills || 0) + (s.assists || 0)) / tk * 100), share: Math.round((s.totalDamageDealtToChampions || 0) / td * 100), ...extra(p, all) };
+}
+// le détail en plus : objectifs, multi-kills, vision, et l'adversaire direct de la même voie (si le client donne les dix joueurs)
+function extra(p, all) {
+  const s = p.stats || {}, role = lane(p.timeline), o = role && all.find(x => x.teamId !== p.teamId && lane(x.timeline) === role), os = o?.stats || {};
+  const cs = x => (x.totalMinionsKilled || 0) + (x.neutralMinionsKilled || 0);
+  return { x: 1, taken: s.totalDamageTaken || 0, mitig: s.damageSelfMitigated || 0, heal: s.totalHeal || 0, cc: s.timeCCingOthers || 0, wards: s.wardsPlaced || 0, wk: s.wardsKilled || 0, cw: s.visionWardsBoughtInGame || 0,
+    multi: [s.doubleKills, s.tripleKills, s.quadraKills, s.pentaKills].map(n => n || 0), spree: s.largestKillingSpree || 0, fb: !!(s.firstBloodKill || s.firstBloodAssist), towers: s.turretKills || 0,
+    ...(o ? { oppCid: o.championId, vsCs: cs(s) - cs(os), vsGold: (s.goldEarned || 0) - (os.goldEarned || 0), vsDmg: (s.totalDamageDealtToChampions || 0) - (os.totalDamageDealtToChampions || 0), vsK: (s.kills || 0) - (os.kills || 0) } : {}) };
 }
 
 async function local(known) {
